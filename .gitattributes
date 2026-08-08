@@ -1,0 +1,5 @@
+# Enforce LF endings on check-in, b/c CubeMX use crlf.
+*.c      text eol=lf
+*.h      text eol=lf
+*.s      text eol=lf
+*.ioc    text eol=lf
