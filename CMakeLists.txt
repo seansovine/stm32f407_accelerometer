@@ -31,6 +31,9 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
+# Produce readable assembly dump for every source file compiled.
+add_compile_options(-save-temps -fverbose-asm)
+
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
