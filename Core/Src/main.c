@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
+#include "usbd_cdc_if.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -108,6 +109,12 @@ int main(void)
 
       HAL_ResumeTick();
     }
+
+    uint8_t TxBuffer[] = "Toggling the blue LED.\r\n";
+    uint8_t TxBufferLen = sizeof(TxBuffer);
+
+    // Send message over USB OTG VTC port.
+    CDC_Transmit_FS(TxBuffer, TxBufferLen);
 
     // Blue LED on.
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
