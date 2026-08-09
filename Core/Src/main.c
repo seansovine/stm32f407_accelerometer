@@ -18,9 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx_hal_def.h"
-#include "stm32f4xx_hal_gpio.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -82,6 +79,15 @@ static volatile uint8_t SLEEPING = 0;
 #define OUT_Z_LOW  (0x2C)
 #define OUT_Z_HIGH (0x2D)
 
+// Control reg 4 init values.
+
+#define LIS_CR4_INIT  0x17
+#define WAIT_FOR_READ 0x08
+
+// Timeout before and after sending USB VTC msg.
+
+#define VTC_TIMEOUT 50
+
 // Vars for accelerometer readings:
 
 #define CANARY_INIT {0xDE, 0xAD}
@@ -95,8 +101,6 @@ static uint8_t z[2] = CANARY_INIT;
 HAL_StatusTypeDef LIS_Read_data(uint8_t addr, uint8_t *data, uint16_t size);
 
 void LIS_Init();
-
-void LIS_Write_Byte(uint8_t addr, uint8_t data);
 
 void LIS_Read();
 
@@ -139,6 +143,11 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+  // TODO: We need to call this twice to make it stick.
+  //       Figure out why. Maybe need to toggle chip first
+  //       to "wake it up".
+  LIS_Init();
+  HAL_Delay(1000);
   LIS_Init();
   HAL_Delay(1000);
 
@@ -257,7 +266,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity       = SPI_POLARITY_HIGH;
   hspi1.Init.CLKPhase          = SPI_PHASE_2EDGE;
   hspi1.Init.NSS               = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit          = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode            = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation    = SPI_CRCCALCULATION_DISABLE;
@@ -414,13 +423,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   }
 }
 
-#define LIS_CR4_INIT  0x17
-#define WAIT_FOR_READ 0x08
-
-void LIS_Init()
-{
-  LIS_Write_Byte(CTRL_REG4, LIS_CR4_INIT);
-}
+#define LIS_HANDLE_ERROR                                                                                               \
+  do                                                                                                                   \
+  {                                                                                                                    \
+    HAL_Delay(VTC_TIMEOUT);                                                                                            \
+    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));                                                                       \
+    HAL_Delay(VTC_TIMEOUT);                                                                                            \
+    SLEEPING = true;                                                                                                   \
+    return;                                                                                                            \
+  } while (0)
 
 void SPI_Transmit_Byte(uint8_t byte)
 {
@@ -430,11 +441,11 @@ void SPI_Transmit_Byte(uint8_t byte)
   }
 }
 
-void LIS_Write_Byte(uint8_t addr, uint8_t data)
+void LIS_Init()
 {
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  SPI_Transmit_Byte(addr);
-  SPI_Transmit_Byte(data);
+  SPI_Transmit_Byte(CTRL_REG4);
+  SPI_Transmit_Byte(LIS_CR4_INIT | WAIT_FOR_READ);
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
 }
 
@@ -460,47 +471,35 @@ HAL_StatusTypeDef LIS_Read_Byte(uint8_t addr, uint8_t *dest)
   return result;
 }
 
-#define VTC_TIMEOUT 100
-
-#define LIS_READ_HANDLE_ERROR                                                                                          \
-  do                                                                                                                   \
-  {                                                                                                                    \
-    HAL_Delay(VTC_TIMEOUT);                                                                                            \
-    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));                                                                       \
-    HAL_Delay(VTC_TIMEOUT);                                                                                            \
-    SLEEPING = true;                                                                                                   \
-    return;                                                                                                            \
-  } while (0)
-
 void LIS_Read()
 {
   static uint8_t errorMsg[] = "SPI receive failure.\r\n";
 
   if (LIS_Read_Byte(OUT_X_LOW, &x[1]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
   if (LIS_Read_Byte(OUT_X_HIGH, &x[0]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
 
   if (LIS_Read_Byte(OUT_Y_LOW, &y[1]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
   if (LIS_Read_Byte(OUT_Y_HIGH, &y[0]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
 
   if (LIS_Read_Byte(OUT_Z_LOW, &z[1]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
   if (LIS_Read_Byte(OUT_Z_HIGH, &z[0]))
   {
-    LIS_READ_HANDLE_ERROR;
+    LIS_HANDLE_ERROR;
   }
 }
 
@@ -522,8 +521,10 @@ void LIS_Check_Status()
 
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
 
-  uint8_t result[2] = {0};
-  if (LIS_Read_data(WHO_AM_I, &result[0], 1) != HAL_OK || LIS_Read_data(STATUS_REG, &result[1], 1) != HAL_OK)
+  uint8_t result[3] = {0};
+  if (LIS_Read_data(WHO_AM_I, &result[0], 1) != HAL_OK ||   //
+      LIS_Read_data(STATUS_REG, &result[1], 1) != HAL_OK || //
+      LIS_Read_data(CTRL_REG4, &result[2], 1) != HAL_OK)
   {
     HAL_Delay(VTC_TIMEOUT);
     CDC_Transmit_FS(errorMsg, sizeof(errorMsg));
@@ -538,8 +539,8 @@ void LIS_Check_Status()
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
   }
 
-  uint8_t resultBuf[32] = {0};
-  sprintf((char *)resultBuf, "WHO_AM_I = 0x%02X | STAT = 0x%02X\r\n", result[0], result[1]);
+  uint8_t resultBuf[48] = {0};
+  sprintf((char *)resultBuf, "WHO_AM_I = 0x%02X | STAT = 0x%02X | CTRL4 = 0x%02X\r\n", result[0], result[1], result[2]);
 
   HAL_Delay(VTC_TIMEOUT);
   CDC_Transmit_FS(resultBuf, strlen((char *)resultBuf) + 1);
