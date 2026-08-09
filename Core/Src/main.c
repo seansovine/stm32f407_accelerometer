@@ -25,10 +25,7 @@
 
 #include "usbd_cdc_if.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
+#include <lis3dsh.h>
 
 /* USER CODE END Includes */
 
@@ -65,48 +62,17 @@ static void MX_SPI1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#define LOOP_TIMEOUT 25
+
 static volatile uint8_t SLEEPING = 0;
 
-// Register addrs for LIS3DSH accelerometer.
-
-#define WHO_AM_I   (0x0F)
-#define CTRL_REG4  (0x20)
-#define STATUS_REG (0x18)
-#define OUT_X_LOW  (0x28)
-#define OUT_X_HIGH (0x29)
-#define OUT_Y_LOW  (0x2A)
-#define OUT_Y_HIGH (0x2B)
-#define OUT_Z_LOW  (0x2C)
-#define OUT_Z_HIGH (0x2D)
-
-// Control reg 4 init values.
-
-#define LIS_CR4_INIT  0x17
-#define WAIT_FOR_READ 0x08
-
-// Timeout before and after sending USB VTC msg.
-
-#define VTC_TIMEOUT 50
-
-// Vars for accelerometer readings:
-
-#define CANARY_INIT {0xDE, 0xAD}
-
-static uint8_t x[2] = CANARY_INIT;
-static uint8_t y[2] = CANARY_INIT;
-static uint8_t z[2] = CANARY_INIT;
-
-// Functions to interact with LIS sensor over SPI.
-
-HAL_StatusTypeDef LIS_Read_data(uint8_t addr, uint8_t *data, uint16_t size);
-
-void LIS_Init();
-
-void LIS_Read();
-
-void LIS_Check_Status();
-
-void LIS_Debug_Log();
+void LEDs_OFF()
+{
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+}
 
 /* USER CODE END 0 */
 
@@ -143,16 +109,18 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
-  // TODO: We need to call this twice to make it stick.
-  //       Figure out why. Maybe need to toggle chip first
-  //       to "wake it up".
-  LIS_Init();
-  HAL_Delay(1000);
-  LIS_Init();
-  HAL_Delay(1000);
+  LEDs_OFF();
 
-  LIS_Check_Status();
-  LIS_Debug_Log();
+  // TODO: In practice we need to call init twice to make it stick. Figure
+  //       out why. Maybe need to toggle chip first to "wake it up".
+
+  LIS_Init(hspi1);
+  HAL_Delay(100);
+  LIS_Init(hspi1);
+  HAL_Delay(500);
+
+  LIS_Check_Status_USB();
+  LIS_Debug_Log_USB();
 
   /* USER CODE END 2 */
 
@@ -160,37 +128,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // Sleep until interrupt. Blue pushbutton toggles this.
     if (SLEEPING)
     {
+      // Sleep until interrupt. Blue pushbutton toggles this.
       HAL_SuspendTick();
-
-      // wfi = wait for interrupt.
       HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
-
       HAL_ResumeTick();
     }
 
     LIS_Read();
+    LIS_Check_Status_USB();
+    LIS_Debug_Log_USB();
 
-    LIS_Check_Status();
-    LIS_Debug_Log();
-
-    if (false)
+#ifdef USB_BLINK
     {
       static uint8_t  TxBuffer[]  = "Toggling the blue LED.\r\n";
       static uint16_t TxBufferLen = sizeof(TxBuffer);
-      // Send message over USB OTG VTC port.
+
+      // Send "blink" message over USB OTG VTC port.
       CDC_Transmit_FS(TxBuffer, TxBufferLen);
     }
+#endif
 
-    // Blue LED on.
+    // Flash blue LED to show loop us running.
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
-    HAL_Delay(500);
-
-    // Blue LED off.
+    HAL_Delay(LOOP_TIMEOUT);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
-    HAL_Delay(500);
+    HAL_Delay(LOOP_TIMEOUT);
 
     /* USER CODE END WHILE */
 
@@ -421,130 +385,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   {
     SLEEPING = SLEEPING ? 0 : 1;
   }
-}
-
-#define LIS_HANDLE_ERROR                                                                                               \
-  do                                                                                                                   \
-  {                                                                                                                    \
-    HAL_Delay(VTC_TIMEOUT);                                                                                            \
-    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));                                                                       \
-    HAL_Delay(VTC_TIMEOUT);                                                                                            \
-    SLEEPING = true;                                                                                                   \
-    return;                                                                                                            \
-  } while (0)
-
-void SPI_Transmit_Byte(uint8_t byte)
-{
-  if (HAL_SPI_Transmit(&hspi1, &byte, 1, HAL_MAX_DELAY))
-  {
-    SLEEPING = true;
-  }
-}
-
-void LIS_Init()
-{
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  SPI_Transmit_Byte(CTRL_REG4);
-  SPI_Transmit_Byte(LIS_CR4_INIT | WAIT_FOR_READ);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
-}
-
-HAL_StatusTypeDef LIS_Read_data(uint8_t addr, uint8_t *data, uint16_t size)
-{
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-
-  SPI_Transmit_Byte(addr | 0x80);
-  HAL_StatusTypeDef result = HAL_SPI_Receive(&hspi1, data, size, HAL_MAX_DELAY);
-
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
-  return result;
-}
-
-HAL_StatusTypeDef LIS_Read_Byte(uint8_t addr, uint8_t *dest)
-{
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-
-  SPI_Transmit_Byte(addr | 0x80);
-  HAL_StatusTypeDef result = HAL_SPI_Receive(&hspi1, dest, 1, HAL_MAX_DELAY);
-
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
-  return result;
-}
-
-void LIS_Read()
-{
-  static uint8_t errorMsg[] = "SPI receive failure.\r\n";
-
-  if (LIS_Read_Byte(OUT_X_LOW, &x[1]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-  if (LIS_Read_Byte(OUT_X_HIGH, &x[0]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-
-  if (LIS_Read_Byte(OUT_Y_LOW, &y[1]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-  if (LIS_Read_Byte(OUT_Y_HIGH, &y[0]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-
-  if (LIS_Read_Byte(OUT_Z_LOW, &z[1]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-  if (LIS_Read_Byte(OUT_Z_HIGH, &z[0]))
-  {
-    LIS_HANDLE_ERROR;
-  }
-}
-
-void LIS_Debug_Log()
-{
-  static uint8_t TxBuffer[48] = {0};
-  sprintf((char *)TxBuffer,                                           //
-          "Data: x = 0x%02X%02X, y = 0x%02X%02X, z = 0x%02X%02X\r\n", //
-          x[0], x[1], y[0], y[1], z[0], z[1]);
-
-  HAL_Delay(VTC_TIMEOUT);
-  CDC_Transmit_FS(TxBuffer, strlen((char *)TxBuffer) + 1);
-  HAL_Delay(VTC_TIMEOUT);
-}
-
-void LIS_Check_Status()
-{
-  static uint8_t errorMsg[] = "Failed to read LIS registers.\r\n";
-
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-
-  uint8_t result[3] = {0};
-  if (LIS_Read_data(WHO_AM_I, &result[0], 1) != HAL_OK ||   //
-      LIS_Read_data(STATUS_REG, &result[1], 1) != HAL_OK || //
-      LIS_Read_data(CTRL_REG4, &result[2], 1) != HAL_OK)
-  {
-    HAL_Delay(VTC_TIMEOUT);
-    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));
-    HAL_Delay(VTC_TIMEOUT);
-
-    SLEEPING = true;
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
-  }
-  else
-  {
-    SLEEPING = false;
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-  }
-
-  uint8_t resultBuf[48] = {0};
-  sprintf((char *)resultBuf, "WHO_AM_I = 0x%02X | STAT = 0x%02X | CTRL4 = 0x%02X\r\n", result[0], result[1], result[2]);
-
-  HAL_Delay(VTC_TIMEOUT);
-  CDC_Transmit_FS(resultBuf, strlen((char *)resultBuf) + 1);
-  HAL_Delay(VTC_TIMEOUT);
 }
 
 /* USER CODE END 4 */
