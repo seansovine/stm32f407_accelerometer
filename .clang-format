@@ -43,7 +43,7 @@ BraceWrapping:
 #   AfterStruct: false
 #   AfterUnion: false
 #   BeforeCatch: true
-#   BeforeElse: true
+  BeforeElse: true
 #   BeforeLambdaBody: false
 #   BeforeWhile: false
 #   IndentSpaces: false

@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal_def.h"
 #include "stm32f4xx_hal_gpio.h"
 #include "usb_device.h"
 
@@ -28,6 +30,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 /* USER CODE END Includes */
@@ -67,36 +70,37 @@ static void MX_SPI1_Init(void);
 
 static volatile uint8_t SLEEPING = 0;
 
-// Register Definitions for accelerometer LIS302DL.
+// Register addrs for LIS3DSH accelerometer.
 
-#define LIS302DL_ADDR   (0x3B)
-#define WHO_AM_I        (0x0F)
-#define CTRL_REG1       (0x20)
-#define CTRL_REG2       (0x21)
-#define CTRL_REG3       (0x22)
-#define HP_FILTER_RESET (0x23)
-#define STATUS_REG      (0x27)
-#define OUT_X           (0x29)
-#define OUT_Y           (0x2B)
-#define OUT_Z           (0x2D)
+#define WHO_AM_I   (0x0F)
+#define CTRL_REG4  (0x20)
+#define STATUS_REG (0x18)
+#define OUT_X_LOW  (0x28)
+#define OUT_X_HIGH (0x29)
+#define OUT_Y_LOW  (0x2A)
+#define OUT_Y_HIGH (0x2B)
+#define OUT_Z_LOW  (0x2C)
+#define OUT_Z_HIGH (0x2D)
 
-// Accelerometer calibration constants.
+// Vars for accelerometer readings:
 
-#define X_OFFSET    18
-#define THRESH_LOW  -120
-#define THRESH_HIGH 120
+#define CANARY_INIT {0xDE, 0xAD}
 
-// For accelerometer reading:
+static uint8_t x[2] = CANARY_INIT;
+static uint8_t y[2] = CANARY_INIT;
+static uint8_t z[2] = CANARY_INIT;
 
-static uint16_t x, y, z;
-// static int16_t  x_final, y_final, z_final;
-// static uint16_t rxd, rxdf;
+// Functions to interact with LIS sensor over SPI.
+
+HAL_StatusTypeDef LIS_Read_data(uint8_t addr, uint8_t *data, uint16_t size);
 
 void LIS_Init();
 
-void LIS_Write(uint8_t addr, uint8_t data);
+void LIS_Write_Byte(uint8_t addr, uint8_t data);
 
 void LIS_Read();
+
+void LIS_Check_Status();
 
 void LIS_Debug_Log();
 
@@ -136,6 +140,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   LIS_Init();
+  HAL_Delay(1000);
+
+  LIS_Check_Status();
+  LIS_Debug_Log();
 
   /* USER CODE END 2 */
 
@@ -155,12 +163,14 @@ int main(void)
     }
 
     LIS_Read();
+
+    LIS_Check_Status();
     LIS_Debug_Log();
 
     if (false)
     {
-      static uint8_t TxBuffer[]  = "Toggling the blue LED.\r\n";
-      static uint8_t TxBufferLen = sizeof(TxBuffer);
+      static uint8_t  TxBuffer[]  = "Toggling the blue LED.\r\n";
+      static uint16_t TxBufferLen = sizeof(TxBuffer);
       // Send message over USB OTG VTC port.
       CDC_Transmit_FS(TxBuffer, TxBufferLen);
     }
@@ -404,81 +414,136 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   }
 }
 
+#define LIS_CR4_INIT  0x17
+#define WAIT_FOR_READ 0x08
+
 void LIS_Init()
 {
-  // Setup accelerometer.
-  LIS_Write(CTRL_REG1, 0x27);
+  LIS_Write_Byte(CTRL_REG4, LIS_CR4_INIT);
 }
 
 void SPI_Transmit_Byte(uint8_t byte)
 {
-  static uint8_t TxBuffer[]  = "SPI transmit failure.\r\n";
-  static uint8_t TxBufferLen = sizeof(TxBuffer);
-
   if (HAL_SPI_Transmit(&hspi1, &byte, 1, HAL_MAX_DELAY))
   {
-    // Send error message over USB OTG VTC port.
-    CDC_Transmit_FS(TxBuffer, TxBufferLen);
+    SLEEPING = true;
   }
 }
 
-void LIS_Write(uint8_t addr, uint8_t data)
+void LIS_Write_Byte(uint8_t addr, uint8_t data)
 {
-  // Selecting the LIS accelerometer
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-
-  // Send register address.
   SPI_Transmit_Byte(addr);
-
-  // Send one byte of data.
   SPI_Transmit_Byte(data);
-
-  // De-select the accelerometer
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
 }
+
+HAL_StatusTypeDef LIS_Read_data(uint8_t addr, uint8_t *data, uint16_t size)
+{
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  SPI_Transmit_Byte(addr | 0x80);
+  HAL_StatusTypeDef result = HAL_SPI_Receive(&hspi1, data, size, HAL_MAX_DELAY);
+
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
+  return result;
+}
+
+HAL_StatusTypeDef LIS_Read_Byte(uint8_t addr, uint8_t *dest)
+{
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  SPI_Transmit_Byte(addr | 0x80);
+  HAL_StatusTypeDef result = HAL_SPI_Receive(&hspi1, dest, 1, HAL_MAX_DELAY);
+
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
+  return result;
+}
+
+#define VTC_TIMEOUT 100
+
+#define LIS_READ_HANDLE_ERROR                                                                                          \
+  do                                                                                                                   \
+  {                                                                                                                    \
+    HAL_Delay(VTC_TIMEOUT);                                                                                            \
+    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));                                                                       \
+    HAL_Delay(VTC_TIMEOUT);                                                                                            \
+    SLEEPING = true;                                                                                                   \
+    return;                                                                                                            \
+  } while (0)
 
 void LIS_Read()
 {
-  static uint8_t TxBuffer[]  = "SPI receive failure.\r\n";
-  static uint8_t TxBufferLen = sizeof(TxBuffer);
+  static uint8_t errorMsg[] = "SPI receive failure.\r\n";
 
-  // Read data for x-axis.
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  SPI_Transmit_Byte(OUT_X | 0x80);
-  if (HAL_SPI_Receive(&hspi1, (uint8_t *)&x, 2, HAL_MAX_DELAY))
+  if (LIS_Read_Byte(OUT_X_LOW, &x[1]))
   {
-    // Send error message over USB OTG VTC port.
-    CDC_Transmit_FS(TxBuffer, TxBufferLen);
+    LIS_READ_HANDLE_ERROR;
   }
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
-
-  // Read data for y-axis.
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  SPI_Transmit_Byte(OUT_Y | 0x80);
-
-  if (HAL_SPI_Receive(&hspi1, (uint8_t *)&y, 2, HAL_MAX_DELAY))
+  if (LIS_Read_Byte(OUT_X_HIGH, &x[0]))
   {
-    // Send error message over USB OTG VTC port.
-    CDC_Transmit_FS(TxBuffer, TxBufferLen);
+    LIS_READ_HANDLE_ERROR;
   }
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
 
-  // Read data for z-axis.
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  SPI_Transmit_Byte(OUT_Z | 0x80);
-  if (HAL_SPI_Receive(&hspi1, (uint8_t *)&z, 2, HAL_MAX_DELAY))
+  if (LIS_Read_Byte(OUT_Y_LOW, &y[1]))
   {
-    // Send error message over USB OTG VTC port.
-    CDC_Transmit_FS(TxBuffer, TxBufferLen);
+    LIS_READ_HANDLE_ERROR;
   }
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
+  if (LIS_Read_Byte(OUT_Y_HIGH, &y[0]))
+  {
+    LIS_READ_HANDLE_ERROR;
+  }
+
+  if (LIS_Read_Byte(OUT_Z_LOW, &z[1]))
+  {
+    LIS_READ_HANDLE_ERROR;
+  }
+  if (LIS_Read_Byte(OUT_Z_HIGH, &z[0]))
+  {
+    LIS_READ_HANDLE_ERROR;
+  }
 }
 
 void LIS_Debug_Log()
 {
-  static uint8_t TxBuffer[] = "Data: x=XXXXX, y=YYYYY, z=ZZZZZ.\r\n";
-  sprintf((char *)TxBuffer, "Data: x=%05d, y=%05d, z=%05d.\r\n", x, y, z);
-  CDC_Transmit_FS(TxBuffer, sizeof(TxBuffer));
+  static uint8_t TxBuffer[48] = {0};
+  sprintf((char *)TxBuffer,                                           //
+          "Data: x = 0x%02X%02X, y = 0x%02X%02X, z = 0x%02X%02X\r\n", //
+          x[0], x[1], y[0], y[1], z[0], z[1]);
+
+  HAL_Delay(VTC_TIMEOUT);
+  CDC_Transmit_FS(TxBuffer, strlen((char *)TxBuffer) + 1);
+  HAL_Delay(VTC_TIMEOUT);
+}
+
+void LIS_Check_Status()
+{
+  static uint8_t errorMsg[] = "Failed to read LIS registers.\r\n";
+
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+  uint8_t result[2] = {0};
+  if (LIS_Read_data(WHO_AM_I, &result[0], 1) != HAL_OK || LIS_Read_data(STATUS_REG, &result[1], 1) != HAL_OK)
+  {
+    HAL_Delay(VTC_TIMEOUT);
+    CDC_Transmit_FS(errorMsg, sizeof(errorMsg));
+    HAL_Delay(VTC_TIMEOUT);
+
+    SLEEPING = true;
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+  }
+  else
+  {
+    SLEEPING = false;
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+  }
+
+  uint8_t resultBuf[32] = {0};
+  sprintf((char *)resultBuf, "WHO_AM_I = 0x%02X | STAT = 0x%02X\r\n", result[0], result[1]);
+
+  HAL_Delay(VTC_TIMEOUT);
+  CDC_Transmit_FS(resultBuf, strlen((char *)resultBuf) + 1);
+  HAL_Delay(VTC_TIMEOUT);
 }
 
 /* USER CODE END 4 */
