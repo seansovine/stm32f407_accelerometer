@@ -9,6 +9,12 @@ TabWidth: 2
 UseTab: Never
 LineEnding: LF
 
+AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveMacros: Consecutive
+
+AllowShortFunctionsOnASingleLine: Empty
+
 # # Alignment Rules (Optimized for embedded readability)
 # AlignAfterOpenBracket: Align
 # AlignConsecutiveAssignments: None
