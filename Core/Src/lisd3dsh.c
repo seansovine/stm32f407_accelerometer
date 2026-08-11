@@ -42,9 +42,30 @@ uint8_t x[2] = CANARY_INIT;
 uint8_t y[2] = CANARY_INIT;
 uint8_t z[2] = CANARY_INIT;
 
+// Scale raw axis readings to g unit.
+
+static const uint16_t g_SCALE_X = 17700;
+static const uint16_t g_SCALE_Y = 16500;
+static const uint16_t g_SCALE_Z = 17300;
+
 // SPI handle from main application.
 
 static SPI_HandleTypeDef hspi1;
+
+// Reading data conversion functions.
+
+int16_t convert(uint8_t *reading)
+{
+  uint16_t combined = (reading[0] << 8) | reading[1];
+  return (int16_t)combined;
+}
+
+// For use in live debugging and calibration.
+float convert_float(uint8_t *reading, uint16_t normalizer)
+{
+  uint16_t combined = (reading[0] << 8) | reading[1];
+  return (int16_t)combined / (float)normalizer;
+}
 
 // Sensor interaction functions.
 
@@ -130,12 +151,30 @@ HAL_StatusTypeDef LIS_Read()
   return HAL_OK;
 }
 
-uint8_t LIS_Debug_Log_USB()
+uint8_t LIS_Send_Readings_USB()
 {
-  static uint8_t TxBuffer[48] = {0};
-  sprintf((char *)TxBuffer,                                           //
+  static uint8_t TxBuffer[64] = {0};
+
+#ifdef SEND_RAW_HEX
+  sprintf((char *)TxBuffer,
           "Data: x = 0x%02X%02X, y = 0x%02X%02X, z = 0x%02X%02X\r\n", //
           x[0], x[1], y[0], y[1], z[0], z[1]);
+#endif
+#ifdef SEND_RAW_SIGNED
+  sprintf((char *)TxBuffer, "Data: x = %06d, y = %06d, z = %06d\r\n", convert(x), convert(y), convert(z));
+#endif
+
+  /*
+   * Done this way for live debugging. In practice we'll send the
+   * raw values and let the client do the heavy math on its end.
+   */
+
+  float x_g_scaled = convert_float(x, g_SCALE_X);
+  float y_g_scaled = convert_float(y, g_SCALE_Y);
+  float z_g_scaled = convert_float(z, g_SCALE_Z);
+
+  // Requires linker flag `-u _printf_float`.
+  sprintf((char *)TxBuffer, "Data: x = %1.4f, y = %1.4f, z = %1.4f\r\n", x_g_scaled, y_g_scaled, z_g_scaled);
 
   HAL_Delay(VTC_TIMEOUT);
   uint8_t result = CDC_Transmit_FS(TxBuffer, strlen((char *)TxBuffer) + 1);

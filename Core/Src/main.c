@@ -120,7 +120,7 @@ int main(void)
   HAL_Delay(500);
 
   LIS_Check_Status_USB();
-  LIS_Debug_Log_USB();
+  LIS_Send_Readings_USB();
 
   /* USER CODE END 2 */
 
@@ -137,8 +137,7 @@ int main(void)
     }
 
     LIS_Read();
-    LIS_Check_Status_USB();
-    LIS_Debug_Log_USB();
+    LIS_Send_Readings_USB();
 
 #ifdef USB_BLINK
     {
