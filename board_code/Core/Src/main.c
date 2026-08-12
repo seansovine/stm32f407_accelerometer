@@ -109,6 +109,8 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+#define SEND LIS_Send_Readings_USB
+
   LEDs_OFF();
 
   // TODO: In practice we need to call init twice to make it stick. Figure
@@ -120,7 +122,7 @@ int main(void)
   HAL_Delay(500);
 
   LIS_Check_Status_USB();
-  LIS_Send_Readings_USB();
+  SEND();
 
   /* USER CODE END 2 */
 
@@ -137,7 +139,7 @@ int main(void)
     }
 
     LIS_Read();
-    LIS_Send_Readings_USB();
+    SEND();
 
 #ifdef USB_BLINK
     {

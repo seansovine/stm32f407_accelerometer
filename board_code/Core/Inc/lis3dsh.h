@@ -26,4 +26,6 @@ HAL_StatusTypeDef LIS_Check_Status_USB();
 
 uint8_t LIS_Send_Readings_USB();
 
+uint8_t LIS_Send_Debug_USB();
+
 #endif // LIS3DSH_H_
