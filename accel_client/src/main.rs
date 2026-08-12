@@ -18,10 +18,7 @@ fn main() {
     println!("Reading from device {}.", device);
 
     let mut serial_buf: Vec<u8> = vec![0; 1024];
-    let mut current_read = 0;
-    let mut current_write = 0;
-
-    const MAX_MSG_LEN: usize = 15;
+    let mut read_end = 0;
 
     enum ReadState {
         Started,
@@ -32,23 +29,14 @@ fn main() {
     let mut current_valid: Vec<u8> = Vec::with_capacity(12);
 
     loop {
-        if current_write > serial_buf.len() - MAX_MSG_LEN {
-            serial_buf.copy_within(current_read..current_write, 0);
-            current_write = current_write - current_read;
-            current_read = 0;
-        }
-
-        match port.read(&mut serial_buf[current_write..]) {
+        match port.read(&mut serial_buf) {
             Ok(t) => {
-                current_write += t;
-                if false {
-                    print!("{}", String::from_utf8_lossy(&serial_buf[..t]));
-                } else if true {
-                    for byte in &serial_buf[..t] {
-                        print!("{:#04X} ", byte);
-                    }
-                    println!();
+                read_end += t;
+                print!("Current buffer: ");
+                for byte in &serial_buf[..t] {
+                    print!("{:#04X} ", byte);
                 }
+                println!();
             }
             Err(e) => {
                 eprintln!("Error reading data: {}", e);
@@ -56,50 +44,90 @@ fn main() {
             }
         }
 
+        /*
+         * Simple state machine to handle reading our data packet format.
+         * See comments in the board C code for details.
+         *
+         * Not really necessayr for usb serial, except for the case that we
+         * start receiving in the middle of a message or several messages are
+         * currently buffered by the OS.
+         */
+
         let mut escaped = false;
-        for i in current_read..current_write {
+        for &byte in &serial_buf[0..read_end] {
             match reader_state {
                 ReadState::NotStarted => {
-                    if serial_buf[i] == 0 {
+                    if byte == 0x00 {
                         reader_state = ReadState::Started;
                         current_valid.clear();
                     }
                 }
                 ReadState::Started => {
-                    if !escaped && serial_buf[i] == 0xFF {
+                    if !escaped && byte == 0xFF {
                         escaped = true;
                         continue;
                     }
                     if escaped {
-                        if serial_buf[i] != 0x00 && serial_buf[i] != 0xFF {
+                        if byte != 0x00 && byte != 0xFF {
                             println!("Invalid escape sequence.");
                             reader_state = ReadState::NotStarted;
                         } else {
-                            current_valid.push(serial_buf[i]);
-                            escaped = false;
+                            current_valid.push(byte);
                         }
+                        escaped = false;
                     } else {
-                        if serial_buf[i] == 0x00 {
+                        if byte == 0x00 {
                             reader_state = ReadState::FirstStopSeen;
                         } else {
-                            current_valid.push(serial_buf[i]);
+                            current_valid.push(byte);
                         }
                     }
                 }
                 ReadState::FirstStopSeen => {
-                    if serial_buf[i] == 0x00 {
+                    if byte == 0x00 {
                         print!("Received packet: ");
                         for byte in &current_valid {
                             print!("{:#04X} ", byte);
                         }
                         println!();
+                        process_packet(&current_valid);
                     } else {
                         println!("Invalid stop character received.");
                     }
-                    current_valid.clear();
+                    reader_state = ReadState::NotStarted;
                 }
             }
         }
-        current_read = current_write;
+        read_end = 0;
     }
+}
+
+fn process_packet(data: &[u8]) {
+    if data.len() != 6 {
+        println!("Invalid packet length.");
+        return;
+    }
+
+    /*
+     * Calibration constants, determined by experiment.
+     * TODO: Add a calibration mode that writes a file.
+     */
+
+    const G_SCALE_X: f32 = 17_700.0;
+    const G_SCALE_Y: f32 = 16_500.0;
+    const G_SCALE_Z: f32 = 17_300.0;
+
+    let a_x = (((data[0] as u16) << 8) | (data[1] as u16)) as i16;
+    let a_x_f = (a_x as f32) / G_SCALE_X;
+
+    let a_y = (((data[2] as u16) << 8) | (data[3] as u16)) as i16;
+    let a_y_f = (a_y as f32) / G_SCALE_Y;
+
+    let a_z = (((data[4] as u16) << 8) | (data[5] as u16)) as i16;
+    let a_z_f = (a_z as f32) / G_SCALE_Z;
+
+    println!("Current reading:");
+    println!("Scaled A_x = {:+1.5}g ", a_x_f,);
+    println!("Scaled A_y = {:+1.5}g", a_y_f);
+    println!("Scaled A_Z = {:+1.5}g", a_z_f);
 }
