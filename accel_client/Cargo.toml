@@ -5,3 +5,11 @@ edition = "2024"
 
 [dependencies]
 serialport = "4.9.0"
+time = { version = "0.3.55", features = ["macros"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = [
+    "env-filter",
+    "fmt",
+    "time",
+    "std",
+] }
