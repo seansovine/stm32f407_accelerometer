@@ -10,7 +10,7 @@ use std::{
 };
 
 use serialport::SerialPort;
-use tracing::{error, error_span, info, info_span, trace, trace_span, warn, warn_span};
+use tracing::{error, info, trace, warn};
 use triple_buffer::{Input, Output, triple_buffer};
 
 #[derive(Clone, Copy, Default)]
@@ -40,15 +40,6 @@ pub fn run(device_name: String, stop: Arc<AtomicBool>) -> (Output<Reading>, Join
 
     let handle = thread::Builder::new()
         .spawn(move || {
-            let trace_span = trace_span!("reader_thread");
-            let _ = trace_span.enter();
-            let info_span = info_span!("reader_thread");
-            let _ = info_span.enter();
-            let error_span = error_span!("reader_thread");
-            let _ = error_span.enter();
-            let warn_span = warn_span!("reader_thread");
-            let _ = warn_span.enter();
-
             let baud_rate = 1_000_000_u32;
             while !stop.load(Ordering::Relaxed) {
                 let mut port = match try_connect(&device_name, baud_rate) {
