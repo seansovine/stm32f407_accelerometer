@@ -62,7 +62,8 @@ static void MX_SPI1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-#define LOOP_TIMEOUT 8
+// Loop will wait this many milliseconds before next iteration.
+#define LOOP_TIMEOUT 16
 
 static volatile uint8_t SLEEPING = 0;
 
@@ -151,11 +152,14 @@ int main(void)
     }
 #endif
 
-    // Flash blue LED to show loop us running.
+    // Delay loop with short busy wait to control read rate.
+    //
+    // Flash blue LED to show loop us running. Note that duty
+    // cycle shows that processing time is shorter than timeout.
+
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
     HAL_Delay(LOOP_TIMEOUT);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
-    HAL_Delay(LOOP_TIMEOUT);
 
     /* USER CODE END WHILE */
 
