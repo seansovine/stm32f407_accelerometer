@@ -13,3 +13,4 @@ tracing-subscriber = { version = "0.3.23", features = [
     "time",
     "std",
 ] }
+triple_buffer = "9.0.0"
