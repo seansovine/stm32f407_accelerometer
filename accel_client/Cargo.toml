@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = "4.6.6"
 serialport = "4.9.0"
 time = { version = "0.3.55", features = ["macros"] }
 tracing = "0.1.44"

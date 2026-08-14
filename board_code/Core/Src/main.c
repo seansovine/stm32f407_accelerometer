@@ -62,7 +62,7 @@ static void MX_SPI1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-#define LOOP_TIMEOUT 25
+#define LOOP_TIMEOUT 8
 
 static volatile uint8_t SLEEPING = 0;
 

@@ -20,27 +20,24 @@
 
 // Control reg 4 init values.
 
-#define LIS_CR4_INIT  0x47
+#define CR4_RATE      0x60 // 100 Hz
+#define CR4_XYZ_ON    0x07
 #define WAIT_FOR_READ 0x08
 
 // Timeout before and after sending USB VTC msg.
 //
-// Explanation: We need as small delay between consecutive transmits
-// on the USB VTG peripheral, because they are buffered and sent
-// asynchronously and without the delay the second write encounters
-// a busy device and fails.
+// Explanation: We use a small delay between consecutive transmits
+// on the USB CDC peripheral, because they are buffered and sent
+// asynchronously, and without the delay the immediate second write
+// encounters a busy device and fails.
 
-#define VTC_TIMEOUT 5
-
-// Vars for accelerometer readings:
-
-#define CANARY_INIT {0xDE, 0xAD}
+#define VTC_TIMEOUT 2
 
 // Global sensor state variables.
 
-uint8_t x[2] = CANARY_INIT;
-uint8_t y[2] = CANARY_INIT;
-uint8_t z[2] = CANARY_INIT;
+uint8_t x[2] = {0};
+uint8_t y[2] = {0};
+uint8_t z[2] = {0};
 
 // Scale raw axis readings to g unit.
 
@@ -89,7 +86,7 @@ HAL_StatusTypeDef LIS_Init(SPI_HandleTypeDef inHspi1)
   HAL_StatusTypeDef result = HAL_OK;
 
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-  if (SPI_Transmit_Byte(CTRL_REG4) || SPI_Transmit_Byte(LIS_CR4_INIT | WAIT_FOR_READ))
+  if (SPI_Transmit_Byte(CTRL_REG4) || SPI_Transmit_Byte(CR4_RATE | CR4_XYZ_ON | WAIT_FOR_READ))
   {
     result = HAL_ERROR;
   }
@@ -188,9 +185,7 @@ uint8_t LIS_Send_Readings_USB()
   TxBuffer[current_idx + 1] = 0x00;
   current_idx += 2;
 
-  HAL_Delay(VTC_TIMEOUT);
   uint8_t result = CDC_Transmit_FS(TxBuffer, current_idx);
-  HAL_Delay(VTC_TIMEOUT);
   return result;
 }
 
@@ -219,9 +214,7 @@ uint8_t LIS_Send_Debug_USB()
   // Requires linker flag `-u _printf_float`.
   sprintf((char *)TxBuffer, "Data: x = %1.4f, y = %1.4f, z = %1.4f\r\n", x_g_scaled, y_g_scaled, z_g_scaled);
 
-  HAL_Delay(VTC_TIMEOUT);
   uint8_t result = CDC_Transmit_FS(TxBuffer, strlen((char *)TxBuffer) + 1);
-  HAL_Delay(VTC_TIMEOUT);
   return result;
 }
 
@@ -236,9 +229,7 @@ HAL_StatusTypeDef LIS_Check_Status_USB()
       LIS_Read_data(STATUS_REG, &result[1], 1) != HAL_OK || //
       LIS_Read_data(CTRL_REG4, &result[2], 1) != HAL_OK)
   {
-    HAL_Delay(VTC_TIMEOUT);
     CDC_Transmit_FS(errorMsg, sizeof(errorMsg));
-    HAL_Delay(VTC_TIMEOUT);
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
     return HAL_ERROR;
@@ -251,9 +242,7 @@ HAL_StatusTypeDef LIS_Check_Status_USB()
   uint8_t resultBuf[48] = {0};
   sprintf((char *)resultBuf, "WHO_AM_I = 0x%02X | STAT = 0x%02X | CTRL4 = 0x%02X\r\n", result[0], result[1], result[2]);
 
-  HAL_Delay(VTC_TIMEOUT);
   CDC_Transmit_FS(resultBuf, strlen((char *)resultBuf) + 1);
-  HAL_Delay(VTC_TIMEOUT);
 
   return HAL_OK;
 }

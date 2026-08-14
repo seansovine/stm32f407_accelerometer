@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use clap::{Arg, Command, value_parser};
 use time::macros::format_description;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt::time::UtcTime};
@@ -14,6 +15,15 @@ use tracing_subscriber::{EnvFilter, fmt::time::UtcTime};
 use accel_client::*;
 
 fn main() {
+    let args = Command::new("accel_client")
+        .arg(
+            Arg::new("reads")
+                .long("reads")
+                .value_parser(value_parser!(usize)),
+        )
+        .get_matches();
+    let num_reads = *args.get_one("reads").unwrap_or(&usize::MAX);
+
     // Setup logging.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -34,7 +44,7 @@ fn main() {
     let stop = Arc::new(AtomicBool::new(false));
     let (mut output_buf, handle) = run(device, stop.clone());
 
-    for _ in 0..200 {
+    for _ in 0..num_reads {
         if handle.is_finished() {
             break;
         }
@@ -42,6 +52,7 @@ fn main() {
         let s = output_buf.read().debug_format();
         info!("Packet in buffer: \n{s}");
     }
+
     stop.store(true, Ordering::Relaxed);
     handle.join().unwrap();
 }

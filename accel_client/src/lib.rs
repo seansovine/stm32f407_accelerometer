@@ -72,11 +72,11 @@ fn try_connect(device_name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort>,
 }
 
 fn byte_string(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 5);
+    let mut string_rep = String::with_capacity(bytes.len() * 5);
     for byte in bytes {
-        write!(&mut s, "{:#04X} ", byte).unwrap();
+        write!(&mut string_rep, "{:#04X} ", byte).unwrap();
     }
-    s
+    string_rep
 }
 
 fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &AtomicBool) {
@@ -88,6 +88,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
         NotStarted,
         FirstStopSeen,
     }
+
     let mut reader_state = ReadState::NotStarted;
     let mut current_valid: Vec<u8> = Vec::with_capacity(12);
 
@@ -100,6 +101,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
             }
             Err(e) => {
                 error!("Error reading data: {}", e);
+                buf_input.input_buffer_mut().valid = false;
                 break;
             }
         }
@@ -109,6 +111,9 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
         //
         // Currently used for USB ACM comm port, but can be used for more
         // general serial connections.
+        //
+        // TODO: IF device starts before reader, sometimes gets stuck in
+        //       a bad state for ~10 read cycles.
 
         let mut escaped = false;
         for &byte in &serial_buf[0..read_end] {
@@ -119,6 +124,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                         current_valid.clear();
                     }
                 }
+
                 ReadState::Started => {
                     if !escaped && byte == 0xFF {
                         escaped = true;
@@ -128,6 +134,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                         if byte != 0x00 && byte != 0xFF {
                             warn!("Invalid escape sequence. Dropping current packet.");
                             reader_state = ReadState::NotStarted;
+                            buf_input.input_buffer_mut().valid = false;
                         } else {
                             current_valid.push(byte);
                         }
@@ -140,6 +147,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                         }
                     }
                 }
+
                 ReadState::FirstStopSeen => {
                     if byte == 0x00 {
                         let s = byte_string(&current_valid);
@@ -153,14 +161,17 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                                 "Invalid packet length: {}. Packet was dropped.",
                                 current_valid.len()
                             );
+                            buf_input.input_buffer_mut().valid = false;
                         }
                     } else {
                         warn!("Invalid stop character received. Dropping current packet.");
+                        buf_input.input_buffer_mut().valid = false;
                     }
                     reader_state = ReadState::NotStarted;
                 }
             }
         }
+
         read_end = 0;
     }
 }
