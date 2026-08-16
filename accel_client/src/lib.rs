@@ -124,6 +124,12 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
         //
         // TODO: IF device starts before reader, sometimes gets stuck in
         //       a bad state for ~10 read cycles.
+        //
+        // UPDATE: This is because we use the same byte for start and stop
+        //       indicator. It gets stuck in a misaligned state until data
+        //       containing a zero byte is sent. Since our data is centered
+        //       at 0, this happens before too long, but we should use a
+        //       different byte for stop to prevent this.
 
         let mut escaped = false;
         for &byte in &serial_buf[0..read_end] {
