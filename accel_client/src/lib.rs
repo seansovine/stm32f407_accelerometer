@@ -59,7 +59,10 @@ pub fn run(device_name: String, stop: Arc<AtomicBool>) -> (Output<Reading>, Join
                 };
 
                 info!("Reading from device {}.", device_name);
-                receive(&mut *port, &mut buf_input, &stop);
+
+                while !stop.load(Ordering::Relaxed) && port.bytes_to_read().is_ok() {
+                    receive(&mut *port, &mut buf_input, &stop);
+                }
             }
         })
         .unwrap();
