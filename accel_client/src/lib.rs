@@ -11,7 +11,9 @@ use std::{
 
 use serialport::SerialPort;
 use tracing::{error, info, trace, warn};
-use triple_buffer::{Input, Output, triple_buffer};
+use triple_buffer::{Input, triple_buffer};
+
+pub use triple_buffer::Output;
 
 #[derive(Clone, Copy, Default)]
 pub struct Reading {
@@ -45,8 +47,12 @@ pub fn run(device_name: String, stop: Arc<AtomicBool>) -> (Output<Reading>, Join
                 let mut port = match try_connect(&device_name, baud_rate) {
                     Ok(p) => p,
                     Err(e) => {
+                        buf_input.input_buffer_mut().valid = false;
+                        buf_input.publish();
+
                         error!("Failed to open device {}: {}", device_name, e);
                         error!("Retrying in 2 seconds...");
+
                         thread::sleep(Duration::from_secs(2));
                         continue;
                     }
@@ -102,6 +108,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
             Err(e) => {
                 error!("Error reading data: {}", e);
                 buf_input.input_buffer_mut().valid = false;
+                buf_input.publish();
                 break;
             }
         }
@@ -135,6 +142,7 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                             warn!("Invalid escape sequence. Dropping current packet.");
                             reader_state = ReadState::NotStarted;
                             buf_input.input_buffer_mut().valid = false;
+                            buf_input.publish();
                         } else {
                             current_valid.push(byte);
                         }
@@ -162,10 +170,12 @@ fn receive(port: &mut dyn SerialPort, buf_input: &mut Input<Reading>, stop: &Ato
                                 current_valid.len()
                             );
                             buf_input.input_buffer_mut().valid = false;
+                            buf_input.publish();
                         }
                     } else {
                         warn!("Invalid stop character received. Dropping current packet.");
                         buf_input.input_buffer_mut().valid = false;
+                        buf_input.publish();
                     }
                     reader_state = ReadState::NotStarted;
                 }
