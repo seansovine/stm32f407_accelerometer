@@ -170,8 +170,9 @@ uint8_t LIS_Send_Readings_USB()
    * case receiver starts receiving in the middle of a message.
    *
    * Special bytes are:
-   *  - 0xx0 indicates beginning of message; 0x00 0x00 indicates end.
-   *  - 0xFF is the escape byte that proceeds a 0x00 or 0xFF in message.
+   *  - 0x00 indicates beginning of message; 0x00 0x00 indicates end.
+   *  - 0xFF is the escape byte that proceeds a 0x00 or 0xFF in message
+   *    body to indicate it is not a start or escape byte.
    */
 
   uint16_t current_idx = 1;

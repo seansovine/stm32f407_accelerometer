@@ -1,3 +1,5 @@
+//! Test program for accelerometer client library.
+
 use std::{
     env,
     sync::{
@@ -15,6 +17,7 @@ use tracing_subscriber::{EnvFilter, fmt::time::UtcTime};
 use accel_client::*;
 
 fn main() {
+    // If no "reads" arg is passed, runs continuously.
     let args = Command::new("accel_client")
         .arg(
             Arg::new("reads")
@@ -35,6 +38,7 @@ fn main() {
         .with_thread_ids(true)
         .init();
 
+    // Try to get serial device to use from environment.
     let Ok(device) = env::var("ACCEL_DEVICE") else {
         error!("Environment variable ACCEL_DEVICE must be set to a valid ttyACM device.");
         std::process::exit(1);
@@ -44,15 +48,16 @@ fn main() {
     let stop = Arc::new(AtomicBool::new(false));
     let (mut output_buf, handle) = run(device, stop.clone());
 
+    // Read and log latest data at ~ 60 hz.
     for _ in 0..num_reads {
         if handle.is_finished() {
             break;
         }
         std::thread::sleep(Duration::from_millis(1000 / 60));
-        let s = output_buf.read().debug_format();
-        info!("Packet in buffer: \n{s}");
+        info!("Packet in buffer: \n{}", output_buf.read().debug_format());
     }
 
+    // Stop read thread and cleanup.
     stop.store(true, Ordering::Relaxed);
     handle.join().unwrap();
 }
